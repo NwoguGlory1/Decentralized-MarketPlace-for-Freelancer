@@ -182,3 +182,29 @@
         arbitrator: (optional principal)
     }
 )
+
+
+;; Open a dispute for a job
+(define-public (open-dispute (job-id uint) (reason (string-ascii 500)))
+    (let
+        (
+            (job (unwrap! (map-get? jobs job-id) err-not-found))
+            (dispute-id (var-get next-dispute-id))
+        )
+        (asserts! (or 
+            (is-eq tx-sender (get client job))
+            (is-eq tx-sender (unwrap! (get freelancer job) err-not-found))
+        ) err-unauthorized)
+        
+        (map-set disputes dispute-id {
+            job-id: job-id,
+            disputant: tx-sender,
+            reason: reason,
+            status: u1,
+            arbitrator: none
+        })
+        
+        (var-set next-dispute-id (+ dispute-id u1))
+        (ok dispute-id)
+    )
+)
