@@ -82,3 +82,21 @@
         (ok job-id)
     )
 )
+
+;; Submit a bid for a job
+(define-public (submit-bid (job-id uint) (amount uint) (proposal (string-ascii 500)))
+    (let
+        (
+            (job (unwrap! (map-get? jobs job-id) err-not-found))
+        )
+        (asserts! (is-eq (get status job) u1) err-invalid-status)
+        (asserts! (<= amount (get budget job)) err-invalid-status)
+        (asserts! (not (is-eq tx-sender (get client job))) err-unauthorized)
+        
+        (map-set bids {job-id: job-id, freelancer: tx-sender} {
+            amount: amount,
+            proposal: proposal
+        })
+        (ok true)
+    )
+)
