@@ -184,6 +184,9 @@
 )
 
 
+;; Define the next dispute ID as a data variable
+(define-data-var next-dispute-id uint u1)
+
 ;; Open a dispute for a job
 (define-public (open-dispute (job-id uint) (reason (string-ascii 500)))
     (let
