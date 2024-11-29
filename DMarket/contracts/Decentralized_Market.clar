@@ -162,3 +162,11 @@
     )
 )
 
+
+;; Initialize contract
+(define-public (initialize)
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (ok true)
+    )
+)
