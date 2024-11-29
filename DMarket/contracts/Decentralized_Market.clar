@@ -211,3 +211,34 @@
         (ok dispute-id)
     )
 )
+
+;; Resolve dispute by contract owner or designated arbitrator
+(define-public (resolve-dispute (dispute-id uint) (resolution-amount uint))
+    (let
+        (
+            (dispute (unwrap! (map-get? disputes dispute-id) err-not-found))
+            (job (unwrap! (map-get? jobs (get job-id dispute)) err-not-found))
+            (escrow-amount (unwrap! (map-get? escrow-balance (get job-id dispute)) err-not-found))
+        )
+        (asserts! (or 
+            (is-eq tx-sender contract-owner)
+            (is-eq (some tx-sender) (get arbitrator dispute))
+        ) err-unauthorized)
+        
+        ;; Transfer resolved amount from escrow
+        (try! (as-contract (stx-transfer? resolution-amount tx-sender 
+            (if (is-eq resolution-amount escrow-amount)
+                (unwrap! (get freelancer job) err-not-found)
+                (get client job)
+            )
+        )))
+        
+        ;; Update dispute and job status
+        (map-set disputes dispute-id (merge dispute {status: u2}))
+        (map-set jobs (get job-id dispute) (merge job {status: u3}))
+        
+        ;; Clear escrow
+        (map-delete escrow-balance (get job-id dispute))
+        (ok true)
+    )
+)
