@@ -290,3 +290,8 @@
         (ok true)
     )
 )
+
+;; Get user rating
+(define-read-only (get-user-rating (user principal))
+    (map-get? user-ratings user)
+)
