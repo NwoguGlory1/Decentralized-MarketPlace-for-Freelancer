@@ -100,3 +100,28 @@
         (ok true)
     )
 )
+
+;; Accept a bid and fund escrow
+(define-public (accept-bid (job-id uint) (freelancer principal))
+    (let
+        (
+            (job (unwrap! (map-get? jobs job-id) err-not-found))
+            (bid (unwrap! (map-get? bids {job-id: job-id, freelancer: freelancer}) err-not-found))
+        )
+        (asserts! (is-eq tx-sender (get client job)) err-unauthorized)
+        (asserts! (is-eq (get status job) u1) err-invalid-status)
+        
+        ;; Transfer funds to escrow
+        (try! (stx-transfer? (get amount bid) tx-sender (as-contract tx-sender)))
+        
+        ;; Update job status and freelancer
+        (map-set jobs job-id (merge job {
+            status: u2,
+            freelancer: (some freelancer)
+        }))
+        
+        ;; Set escrow balance
+        (map-set escrow-balance job-id (get amount bid))
+        (ok true)
+    )
+)
