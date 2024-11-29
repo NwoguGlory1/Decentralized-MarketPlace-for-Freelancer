@@ -41,3 +41,17 @@
     uint
     uint
 )
+
+;; Read-only functions
+
+(define-read-only (get-job (job-id uint))
+    (map-get? jobs job-id)
+)
+
+(define-read-only (get-bid (job-id uint) (freelancer principal))
+    (map-get? bids {job-id: job-id, freelancer: freelancer})
+)
+
+(define-read-only (get-escrow-balance (job-id uint))
+    (default-to u0 (map-get? escrow-balance job-id))
+)
