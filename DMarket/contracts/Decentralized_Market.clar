@@ -253,3 +253,40 @@
         ratings-count: uint
     }
 )
+
+;; Rate a completed job
+(define-public (rate-job (job-id uint) (rating uint))
+    (let
+        (
+            (job (unwrap! (map-get? jobs job-id) err-not-found))
+            (rater tx-sender)
+        )
+        (asserts! (is-eq (get status job) u3) err-invalid-status)
+        (asserts! (or 
+            (is-eq rater (get client job))
+            (is-eq rater (unwrap! (get freelancer job) err-not-found))
+        ) err-unauthorized)
+        (asserts! (and (>= rating u1) (<= rating u5)) err-invalid-status)
+        
+        (let
+            (
+                (target (if (is-eq rater (get client job)) 
+                    (unwrap! (get freelancer job) err-not-found)
+                    (get client job)))
+                (current-rating (default-to 
+                    {total-jobs: u0, completed-jobs: u0, average-rating: u0, ratings-count: u0} 
+                    (map-get? user-ratings target)))
+            )
+            (map-set user-ratings target {
+                total-jobs: (+ (get total-jobs current-rating) u1),
+                completed-jobs: (+ (get completed-jobs current-rating) u1),
+                average-rating: (/ 
+                    (+ (* (get average-rating current-rating) (get ratings-count current-rating)) rating)
+                    (+ (get ratings-count current-rating) u1)
+                ),
+                ratings-count: (+ (get ratings-count current-rating) u1)
+            })
+        )
+        (ok true)
+    )
+)
