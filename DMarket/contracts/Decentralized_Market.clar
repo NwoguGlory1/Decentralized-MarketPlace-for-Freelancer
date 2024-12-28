@@ -8,6 +8,11 @@
 (define-constant err-invalid-status (err u103))
 (define-constant err-insufficient-funds (err u104))
 (define-constant err-unauthorized (err u105))
+(define-constant err-invalid-amount (err u106))
+(define-constant err-past-deadline (err u107))
+(define-constant err-invalid-rating (err u108))
+(define-constant err-already-rated (err u109))
+(define-constant minimum-bid-time u720)
 
 ;; Job Status: 1-Open, 2-In Progress, 3-Completed, 4-Cancelled
 (define-data-var next-job-id uint u1)
@@ -294,4 +299,36 @@
 ;; Get user rating
 (define-read-only (get-user-rating (user principal))
     (map-get? user-ratings user)
+)
+
+;; Additional Data Maps
+(define-map job-ratings
+    {job-id: uint, rater: principal}
+    {rating: uint, comment: (string-ascii 200)}
+)
+
+(define-map freelancer-skills
+    principal
+    (list 10 (string-ascii 50))
+)
+
+(define-map user-profiles
+    principal
+    {
+        name: (string-ascii 50),
+        bio: (string-ascii 500),
+        contact: (string-ascii 100),
+        hourly-rate: uint,
+        total-earnings: uint
+    }
+)
+
+(define-map milestone-tracking
+    {job-id: uint, milestone-id: uint}
+    {
+        description: (string-ascii 200),
+        amount: uint,
+        status: uint,  ;; 1-Pending, 2-Completed, 3-Paid
+        deadline: uint
+    }
 )
