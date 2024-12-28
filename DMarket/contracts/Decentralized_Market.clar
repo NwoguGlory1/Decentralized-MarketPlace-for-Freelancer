@@ -371,3 +371,8 @@
         (map-get? user-profiles user)
     )
 )
+
+;; Update freelancer skills
+(define-public (update-skills (skills (list 10 (string-ascii 50))))
+    (ok (map-set freelancer-skills tx-sender skills))
+)
