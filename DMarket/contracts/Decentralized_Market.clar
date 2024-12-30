@@ -376,3 +376,175 @@
 (define-public (update-skills (skills (list 10 (string-ascii 50))))
     (ok (map-set freelancer-skills tx-sender skills))
 )
+
+ Enhanced job posting with milestones
+(define-public (post-job-with-milestones 
+    (title (string-ascii 100)) 
+    (description (string-ascii 500)) 
+    (budget uint) 
+    (deadline uint)
+    (milestones (list 5 {description: (string-ascii 200), amount: uint, deadline: uint}))
+)
+    (let
+        (
+            (job-id (var-get next-job-id))
+            (total-milestone-amount (fold + (map get-amount milestones) u0))
+        )
+        ;; Validate inputs
+        (asserts! (> budget u0) err-invalid-amount)
+        (asserts! (> deadline block-height) err-past-deadline)
+        (asserts! (>= (- deadline block-height) minimum-bid-time) err-invalid-status)
+        (asserts! (is-eq budget total-milestone-amount) err-invalid-amount)
+        
+        ;; Create the job
+        (try! (map-set jobs job-id {
+            client: tx-sender,
+            title: title,
+            description: description,
+            budget: budget,
+            freelancer: none,
+            status: u1,
+            deadline: deadline,
+            created-at: block-height
+        }))
+        
+        ;; Create milestones
+        (try! (create-milestones job-id milestones u0))
+        
+        ;; Increment job ID
+        (var-set next-job-id (+ job-id u1))
+        (ok job-id)
+    )
+)
+
+;; Helper function to get amount from milestone
+(define-private (get-amount (milestone {description: (string-ascii 200), amount: uint, deadline: uint}))
+    (get amount milestone)
+)
+
+;; Helper function to create milestones recursively
+(define-private (create-milestones (job-id uint) (milestones (list 5 {description: (string-ascii 200), amount: uint, deadline: uint})) (milestone-id uint))
+    (match (element-at milestones milestone-id)
+        milestone (begin
+            (try! (map-set milestone-tracking 
+                {job-id: job-id, milestone-id: milestone-id}
+                {
+                    description: (get description milestone),
+                    amount: (get amount milestone),
+                    status: u1,
+                    deadline: (get deadline milestone)
+                }
+            ))
+            (if (< (+ milestone-id u1) (len milestones))
+                (create-milestones job-id milestones (+ milestone-id u1))
+                (ok true)
+            )
+        )
+        (ok true)
+    )
+)
+
+;; Add function to get milestone details
+(define-read-only (get-milestone (job-id uint) (milestone-id uint))
+    (map-get? milestone-tracking {job-id: job-id, milestone-id: milestone-id})
+)
+
+;; Add function to complete milestone
+(define-public (complete-milestone (job-id uint) (milestone-id uint))
+    (let
+        (
+            (job (unwrap! (map-get? jobs job-id) err-not-found))
+            (milestone (unwrap! (map-get? milestone-tracking {job-id: job-id, milestone-id: milestone-id}) err-not-found))
+        )
+        (asserts! (is-eq (get status job) u2) err-invalid-status)
+        (asserts! (is-eq (get status milestone) u1) err-invalid-status)
+        (asserts! (is-eq tx-sender (get client job)) err-unauthorized)
+        (asserts! (<= block-height (get deadline milestone)) err-past-deadline)
+        
+        ;; Transfer milestone amount to freelancer
+        (try! (as-contract (stx-transfer? 
+            (get amount milestone) 
+            tx-sender 
+            (unwrap! (get freelancer job) err-not-found)
+        )))
+        
+        ;; Update milestone status
+        (map-set milestone-tracking 
+            {job-id: job-id, milestone-id: milestone-id}
+            (merge milestone {status: u3})
+        )
+        
+        ;; Check if all milestones are completed
+        (if (all-milestones-completed job-id)
+            (begin
+                (try! (map-set jobs job-id (merge job {status: u3})))
+                (ok true)
+            )
+            (ok true)
+        )
+    )
+)
+
+;; Helper function to check if all milestones are completed
+(define-private (all-milestones-completed (job-id uint))
+    (let
+        (
+            (job (unwrap! (map-get? jobs job-id) err-not-found))
+            (total-milestones (len (unwrap! (get-job-milestones job-id) false)))
+            (completed-milestones (get-completed-milestone-count job-id u0 u0))
+        )
+        (is-eq total-milestones completed-milestones)
+    )
+)
+
+;; Helper function to count completed milestones
+(define-private (get-completed-milestone-count (job-id uint) (current-id uint) (count uint))
+    (match (map-get? milestone-tracking {job-id: job-id, milestone-id: current-id})
+        milestone (if (is-eq (get status milestone) u3)
+            (get-completed-milestone-count job-id (+ current-id u1) (+ count u1))
+            (get-completed-milestone-count job-id (+ current-id u1) count)
+        )
+        count
+    )
+)
+
+;; Helper function to get all milestones for a job
+(define-read-only (get-job-milestones (job-id uint))
+    (let
+        (
+            (milestone-list (list))
+        )
+        (ok (get-milestone-list job-id u0 milestone-list))
+    )
+)
+
+;; Helper function to build milestone list
+(define-private (get-milestone-list (job-id uint) (current-id uint) (acc (list 5 {milestone-id: uint, description: (string-ascii 200), amount: uint, status: uint, deadline: uint})))
+    (match (map-get? milestone-tracking {job-id: job-id, milestone-id: current-id})
+        milestone (if (< (len acc) u5)
+            (get-milestone-list 
+                job-id 
+                (+ current-id u1)
+                (unwrap! (as-max-len? 
+                    (append 
+                        acc
+                        {
+                            milestone-id: current-id,
+                            description: (get description milestone),
+                            amount: (get amount milestone),
+                            status: (get status milestone),
+                            deadline: (get deadline milestone)
+                        }
+                    )
+                    u5
+                ) 
+                acc)
+            )
+            acc
+        )
+        acc
+    )
+
+
+
+
