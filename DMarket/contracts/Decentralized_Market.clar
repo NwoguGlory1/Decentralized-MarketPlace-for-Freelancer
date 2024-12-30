@@ -652,6 +652,29 @@
         
         (ok true)
 
+;; Enhanced job completion with automatic rating request
+(define-public (complete-job-enhanced (job-id uint) (rating uint) (comment (string-ascii 200)))
+    (let
+        (
+            (job (unwrap! (map-get? jobs job-id) err-not-found))
+        )
+        ;; Complete the job first
+        (try! (complete-job job-id))
+        
+        ;; Add rating
+        (try! (rate-job job-id rating))
+        
+        ;; Store detailed rating
+        (map-set job-ratings 
+            {job-id: job-id, rater: tx-sender}
+            {rating: rating, comment: comment}
+        )
+        
+        (ok true)
+    )
+)
+
+
         
 
 
