@@ -545,6 +545,16 @@
         acc
     )
 
-
+    ;; Post the main job
+        (try! (post-job title description budget deadline))
+        
+        ;; Set up milestones
+        (map-set milestone-tracking 
+            {job-id: job-id, milestone-id: u0}
+            (unwrap! (element-at? milestones u0) err-invalid-status)
+        )
+        
+        (ok job-id)
+    )
 
 
