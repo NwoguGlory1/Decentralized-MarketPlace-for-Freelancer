@@ -634,3 +634,25 @@
             (unwrap! (get freelancer job) err-not-found)
         )))
 
+;; Update freelancer earnings
+        (let
+            (
+                (profile (default-to 
+                    {name: "", bio: "", contact: "", hourly-rate: u0, total-earnings: u0}
+                    (map-get? user-profiles (unwrap! (get freelancer job) err-not-found))
+                ))
+            )
+            (map-set user-profiles 
+                (unwrap! (get freelancer job) err-not-found)
+                (merge profile {
+                    total-earnings: (+ (get total-earnings profile) (get amount milestone))
+                })
+            )
+        )
+        
+        (ok true)
+
+        
+
+
+
