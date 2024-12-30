@@ -674,7 +674,27 @@
     )
 )
 
+;; New Read-only Functions
 
+(define-read-only (get-job-bids (job-id uint))
+    (map-get? bids {job-id: job-id, freelancer: tx-sender})
+)
+
+(define-read-only (get-user-profile (user principal))
+    (map-get? user-profiles user)
+)
+
+(define-read-only (get-freelancer-skills (user principal))
+    (map-get? freelancer-skills user)
+)
+
+(define-read-only (get-job-rating (job-id uint) (rater principal))
+    (map-get? job-ratings {job-id: job-id, rater: rater})
+)
+
+(define-read-only (get-milestone (job-id uint) (milestone-id uint))
+    (map-get? milestone-tracking {job-id: job-id, milestone-id: milestone-id})
+)
         
 
 
