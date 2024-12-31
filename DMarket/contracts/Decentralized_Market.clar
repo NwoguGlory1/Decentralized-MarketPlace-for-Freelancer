@@ -861,3 +861,37 @@
         comments: (list 10 (string-ascii 200))
     }
 )
+
+;; Update milestone progress
+(define-public (update-milestone-progress 
+    (job-id uint) 
+    (milestone-id uint) 
+    (percent uint)
+    (comment (string-ascii 200))
+)
+    (let
+        (
+            (job (unwrap! (map-get? jobs job-id) err-not-found))
+            (current-progress (default-to 
+                {percent-complete: u0, last-update: u0, comments: (list)}
+                (map-get? milestone-progress {job-id: job-id, milestone-id: milestone-id})
+            ))
+        )
+        (asserts! (or 
+            (is-eq tx-sender (unwrap! (get freelancer job) err-not-found))
+            (is-eq tx-sender (get client job))
+        ) err-unauthorized)
+        
+        (ok (map-set milestone-progress
+            {job-id: job-id, milestone-id: milestone-id}
+            {
+                percent-complete: percent,
+                last-update: block-height,
+                comments: (unwrap! (as-max-len? 
+                    (append (get comments current-progress) comment)
+                    u10
+                ) err-invalid-status)
+            }
+        ))
+    )
+)
