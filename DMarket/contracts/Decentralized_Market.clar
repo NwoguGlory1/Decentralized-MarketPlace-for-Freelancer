@@ -801,3 +801,14 @@
         }
     ))
 )
+
+;; Get freelancer availability
+(define-read-only (get-freelancer-availability (freelancer principal))
+    (map-get? freelancer-availability freelancer)
+)
+
+;; Job bookmarking system
+(define-map bookmarked-jobs
+    principal
+    (list 50 uint)
+)
