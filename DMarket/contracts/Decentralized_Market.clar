@@ -779,3 +779,25 @@
 (define-read-only (get-jobs-by-category (category (string-ascii 50)))
     (default-to (list) (map-get? jobs-by-category category))
 )
+
+;; Freelancer availability system
+(define-map freelancer-availability
+    principal
+    {
+        available: bool,
+        next-available-date: uint,
+        weekly-hours: uint
+    }
+)
+
+;; Update availability
+(define-public (update-availability (available bool) (next-available-date uint) (weekly-hours uint))
+    (ok (map-set freelancer-availability 
+        tx-sender
+        {
+            available: available,
+            next-available-date: next-available-date,
+            weekly-hours: weekly-hours
+        }
+    ))
+)
