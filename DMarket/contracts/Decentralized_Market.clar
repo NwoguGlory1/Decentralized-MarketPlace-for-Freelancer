@@ -774,3 +774,8 @@
         )
     )
 )
+
+;; Get jobs by category
+(define-read-only (get-jobs-by-category (category (string-ascii 50)))
+    (default-to (list) (map-get? jobs-by-category category))
+)
