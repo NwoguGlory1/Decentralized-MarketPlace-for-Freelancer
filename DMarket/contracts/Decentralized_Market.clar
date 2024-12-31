@@ -755,3 +755,22 @@
         (ok true)
     )
 )
+
+;; Add job to category
+(define-public (add-job-to-category (job-id uint) (category (string-ascii 50)))
+    (let
+        (
+            (job (unwrap! (map-get? jobs job-id) err-not-found))
+            (current-jobs (default-to (list) (map-get? jobs-by-category category)))
+        )
+        (asserts! (is-eq tx-sender (get client job)) err-unauthorized)
+        
+        (ok (map-set jobs-by-category 
+            category
+            (unwrap! (as-max-len? 
+                (append current-jobs job-id)
+                u100
+            ) err-invalid-status))
+        )
+    )
+)
