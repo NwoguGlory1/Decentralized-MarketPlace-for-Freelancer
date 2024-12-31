@@ -850,3 +850,14 @@
 (define-read-only (get-job-tags (job-id uint))
     (map-get? job-tags job-id)
 )
+
+
+;; Enhanced milestone system with progress tracking
+(define-map milestone-progress
+    {job-id: uint, milestone-id: uint}
+    {
+        percent-complete: uint,
+        last-update: uint,
+        comments: (list 10 (string-ascii 200))
+    }
+)
