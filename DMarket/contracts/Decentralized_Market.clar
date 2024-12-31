@@ -845,3 +845,8 @@
         (ok (map-set job-tags job-id tags))
     )
 )
+
+;; Get job tags
+(define-read-only (get-job-tags (job-id uint))
+    (map-get? job-tags job-id)
+)
