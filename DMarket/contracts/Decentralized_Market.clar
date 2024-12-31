@@ -735,3 +735,14 @@
 (define-read-only (get-time-logs (job-id uint) (freelancer principal))
     (map-get? time-logs {job-id: job-id, freelancer: freelancer})
 )
+
+;; Job categories system
+(define-map job-categories
+    uint
+    (string-ascii 50)
+)
+
+(define-map jobs-by-category
+    (string-ascii 50)
+    (list 100 uint)
+)
