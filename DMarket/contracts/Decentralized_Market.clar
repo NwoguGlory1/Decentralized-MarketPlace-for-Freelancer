@@ -746,3 +746,12 @@
     (string-ascii 50)
     (list 100 uint)
 )
+
+;; Add job category
+(define-public (add-job-category (category (string-ascii 50)))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (map-set job-categories (var-get next-job-id) category)
+        (ok true)
+    )
+)
