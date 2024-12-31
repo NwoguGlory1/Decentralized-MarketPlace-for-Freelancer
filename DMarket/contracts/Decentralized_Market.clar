@@ -705,3 +705,28 @@
         description: (string-ascii 200)
     })
 )
+
+;; Add time entry
+(define-public (log-time (job-id uint) (hours uint) (description (string-ascii 200)))
+    (let
+        (
+            (job (unwrap! (map-get? jobs job-id) err-not-found))
+            (current-logs (default-to (list) (map-get? time-logs {job-id: job-id, freelancer: tx-sender})))
+        )
+        ;; Verify freelancer is assigned to job
+        (asserts! (is-eq (some tx-sender) (get freelancer job)) err-unauthorized)
+        (asserts! (is-eq (get status job) u2) err-invalid-status)
+        
+        ;; Add new time entry
+        (ok (map-set time-logs 
+            {job-id: job-id, freelancer: tx-sender}
+            (unwrap! (as-max-len? 
+                (append 
+                    current-logs 
+                    {date: block-height, hours: hours, description: description}
+                )
+                u100
+            ) err-invalid-status))
+        )
+    )
+)
