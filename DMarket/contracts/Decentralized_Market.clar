@@ -730,3 +730,8 @@
         )
     )
 )
+
+;; Get time logs for a job
+(define-read-only (get-time-logs (job-id uint) (freelancer principal))
+    (map-get? time-logs {job-id: job-id, freelancer: freelancer})
+)
