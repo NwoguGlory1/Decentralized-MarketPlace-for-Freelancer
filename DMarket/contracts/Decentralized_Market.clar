@@ -895,3 +895,8 @@
         ))
     )
 )
+
+;; Get milestone progress
+(define-read-only (get-milestone-progress (job-id uint) (milestone-id uint))
+    (map-get? milestone-progress {job-id: job-id, milestone-id: milestone-id})
+)
