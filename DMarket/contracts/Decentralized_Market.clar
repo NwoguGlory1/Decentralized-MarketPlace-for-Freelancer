@@ -812,3 +812,19 @@
     principal
     (list 50 uint)
 )
+
+;; Bookmark a job
+(define-public (bookmark-job (job-id uint))
+    (let
+        (
+            (current-bookmarks (default-to (list) (map-get? bookmarked-jobs tx-sender)))
+        )
+        (ok (map-set bookmarked-jobs 
+            tx-sender
+            (unwrap! (as-max-len? 
+                (append current-bookmarks job-id)
+                u50
+            ) err-invalid-status))
+        )
+    )
+)
