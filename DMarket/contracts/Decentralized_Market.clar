@@ -828,3 +828,9 @@
         )
     )
 )
+
+;; Enhanced search functionality
+(define-map job-tags
+    uint
+    (list 10 (string-ascii 50))
+)
