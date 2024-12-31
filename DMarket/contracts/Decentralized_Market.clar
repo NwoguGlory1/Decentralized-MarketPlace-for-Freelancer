@@ -695,7 +695,13 @@
 (define-read-only (get-milestone (job-id uint) (milestone-id uint))
     (map-get? milestone-tracking {job-id: job-id, milestone-id: milestone-id})
 )
-        
 
-
-
+;; Time tracking system
+(define-map time-logs
+    {job-id: uint, freelancer: principal}
+    (list 100 {
+        date: uint,
+        hours: uint,
+        description: (string-ascii 200)
+    })
+)
