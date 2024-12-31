@@ -834,3 +834,14 @@
     uint
     (list 10 (string-ascii 50))
 )
+
+;; Add tags to job
+(define-public (add-job-tags (job-id uint) (tags (list 10 (string-ascii 50))))
+    (let
+        (
+            (job (unwrap! (map-get? jobs job-id) err-not-found))
+        )
+        (asserts! (is-eq tx-sender (get client job)) err-unauthorized)
+        (ok (map-set job-tags job-id tags))
+    )
+)
