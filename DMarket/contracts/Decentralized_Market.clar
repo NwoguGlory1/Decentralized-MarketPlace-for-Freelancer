@@ -1,4 +1,4 @@
-;; Freelancer Marketplace Contract
+;; Freelancer Marketplace Contract - Updated
 ;; Allows clients to post jobs, freelancers to bid, and handles escrow payments
 
 (define-constant contract-owner tx-sender)
@@ -12,10 +12,18 @@
 (define-constant err-past-deadline (err u107))
 (define-constant err-invalid-rating (err u108))
 (define-constant err-already-rated (err u109))
+(define-constant err-invalid-team (err u110))
+(define-constant err-invalid-percentage (err u111))
+(define-constant err-verification-required (err u112))
+(define-constant err-invalid-invitation (err u113))
 (define-constant minimum-bid-time u720)
 
 ;; Job Status: 1-Open, 2-In Progress, 3-Completed, 4-Cancelled
 (define-data-var next-job-id uint u1)
+(define-data-var next-dispute-id uint u1)
+(define-data-var next-team-id uint u1)
+(define-data-var next-invitation-id uint u1)
+(define-data-var next-verification-id uint u1)
 
 ;; Job Details Map
 (define-map jobs
@@ -28,7 +36,8 @@
         freelancer: (optional principal),
         status: uint,
         deadline: uint,
-        created-at: uint
+        created-at: uint,
+        is-featured: bool
     }
 )
 
@@ -47,6 +56,80 @@
     uint
 )
 
+;; Subscription system for featured job listings
+(define-map subscriptions
+    principal
+    {
+        level: uint,  ;; 1-Basic, 2-Premium, 3-Enterprise
+        expiry: uint,
+        featured-jobs-remaining: uint
+    }
+)
+
+;; Direct Job Invitations
+(define-map job-invitations
+    uint  ;; invitation-id
+    {
+        job-id: uint,
+        client: principal,
+        freelancer: principal,
+        message: (string-ascii 200),
+        status: uint  ;; 1-Pending, 2-Accepted, 3-Declined
+    }
+)
+
+;; Skill Verification System
+(define-map verified-skills
+    uint  ;; verification-id
+    {
+        freelancer: principal,
+        skill: (string-ascii 50),
+        verifier: principal,
+        verified-at: uint,
+        level: uint  ;; 1-Beginner, 2-Intermediate, 3-Expert, 4-Master
+    }
+)
+
+;; Freelancer Teams/Collaboration
+(define-map teams
+    uint  ;; team-id
+    {
+        name: (string-ascii 50),
+        leader: principal,
+        members: (list 10 principal),
+        created-at: uint
+    }
+)
+
+;; Team Assignments for Jobs
+(define-map team-assignments
+    uint  ;; job-id
+    {
+        team-id: uint,
+        payment-splits: (list 10 {member: principal, percentage: uint})
+    }
+)
+
+;; Referral System
+(define-map referrals
+    {referrer: principal, referee: principal}
+    {
+        created-at: uint,
+        status: uint,  ;; 1-Pending, 2-Completed
+        reward: uint
+    }
+)
+
+;; Smart Deadlines
+(define-map smart-deadlines
+    uint  ;; job-id
+    {
+        original-deadline: uint,
+        extensions: (list 5 {reason: (string-ascii 100), length: uint}),
+        current-deadline: uint
+    }
+)
+
 ;; Read-only functions
 
 (define-read-only (get-job (job-id uint))
@@ -61,6 +144,34 @@
     (default-to u0 (map-get? escrow-balance job-id))
 )
 
+(define-read-only (get-subscription (user principal))
+    (map-get? subscriptions user)
+)
+
+(define-read-only (get-invitation (invitation-id uint))
+    (map-get? job-invitations invitation-id)
+)
+
+(define-read-only (get-verified-skill (verification-id uint))
+    (map-get? verified-skills verification-id)
+)
+
+(define-read-only (get-team (team-id uint))
+    (map-get? teams team-id)
+)
+
+(define-read-only (get-team-assignment (job-id uint))
+    (map-get? team-assignments job-id)
+)
+
+(define-read-only (get-referral (referrer principal) (referee principal))
+    (map-get? referrals {referrer: referrer, referee: referee})
+)
+
+(define-read-only (get-smart-deadline (job-id uint))
+    (map-get? smart-deadlines job-id)
+)
+
 ;; Public functions
 
 ;; Post a new job
@@ -69,8 +180,8 @@
         (
             (job-id (var-get next-job-id))
         )
-        (asserts! (> budget u0) err-invalid-status)
-        (asserts! (> deadline block-height) err-invalid-status)
+        (asserts! (> budget u0) err-invalid-amount)
+        (asserts! (> deadline block-height) err-past-deadline)
         
         (map-set jobs job-id {
             client: tx-sender,
@@ -80,7 +191,15 @@
             freelancer: none,
             status: u1,
             deadline: deadline,
-            created-at: block-height
+            created-at: block-height,
+            is-featured: false
+        })
+        
+        ;; Initialize smart deadline
+        (map-set smart-deadlines job-id {
+            original-deadline: deadline,
+            extensions: (list),
+            current-deadline: deadline
         })
         
         (var-set next-job-id (+ job-id u1))
@@ -95,7 +214,7 @@
             (job (unwrap! (map-get? jobs job-id) err-not-found))
         )
         (asserts! (is-eq (get status job) u1) err-invalid-status)
-        (asserts! (<= amount (get budget job)) err-invalid-status)
+        (asserts! (<= amount (get budget job)) err-invalid-amount)
         (asserts! (not (is-eq tx-sender (get client job))) err-unauthorized)
         
         (map-set bids {job-id: job-id, freelancer: tx-sender} {
@@ -141,8 +260,17 @@
         (asserts! (is-eq tx-sender (get client job)) err-unauthorized)
         (asserts! (is-eq (get status job) u2) err-invalid-status)
         
-        ;; Transfer funds to freelancer
-        (try! (as-contract (stx-transfer? escrow-amount tx-sender (unwrap! (get freelancer job) err-not-found))))
+        ;; Check if job was assigned to a team
+        (match (map-get? team-assignments job-id)
+            team-assignment (try!
+                (release-payment-to-team job-id escrow-amount team-assignment))
+            ;; If not a team assignment, pay the individual freelancer
+            (try! (as-contract (stx-transfer? 
+                escrow-amount 
+                tx-sender 
+                (unwrap! (get freelancer job) err-not-found)
+            )))
+        )
         
         ;; Update job status
         (map-set jobs job-id (merge job {status: u3}))
@@ -150,6 +278,33 @@
         ;; Clear escrow
         (map-delete escrow-balance job-id)
         (ok true)
+    )
+)
+
+;; Private helper to release payment to team members
+(define-private (release-payment-to-team (job-id uint) (amount uint) (assignment {team-id: uint, payment-splits: (list 10 {member: principal, percentage: uint})}))
+    (fold release-payment-to-member (get payment-splits assignment) (ok amount))
+)
+
+;; Helper to pay each team member
+(define-private (release-payment-to-member 
+    (split {member: principal, percentage: uint}) 
+    (result (response uint uint))
+)
+    (match result
+        amount (let
+            (
+                (member-amount (/ (* amount (get percentage split)) u100))
+            )
+            (if (> member-amount u0)
+                (begin
+                    (try! (as-contract (stx-transfer? member-amount tx-sender (get member split))))
+                    (ok (- amount member-amount))
+                )
+                (ok amount)
+            )
+        )
+        error (err error)
     )
 )
 
@@ -166,7 +321,6 @@
         (ok true)
     )
 )
-
 
 ;; Initialize contract
 (define-public (initialize)
@@ -187,10 +341,6 @@
         arbitrator: (optional principal)
     }
 )
-
-
-;; Define the next dispute ID as a data variable
-(define-data-var next-dispute-id uint u1)
 
 ;; Open a dispute for a job
 (define-public (open-dispute (job-id uint) (reason (string-ascii 500)))
@@ -271,7 +421,7 @@
             (is-eq rater (get client job))
             (is-eq rater (unwrap! (get freelancer job) err-not-found))
         ) err-unauthorized)
-        (asserts! (and (>= rating u1) (<= rating u5)) err-invalid-status)
+        (asserts! (and (>= rating u1) (<= rating u5)) err-invalid-rating)
         
         (let
             (
@@ -377,8 +527,8 @@
     (ok (map-set freelancer-skills tx-sender skills))
 )
 
-;; Helper functions need to be defined first
-(define-private (get-amount (milestone {description: (string-ascii 200), amount: uint, deadline: uint}))
+;; Helper function to get amount from milestone
+(define-private (get-amount (milestone {description: (string-ascii 200), amount: uint, status: uint, deadline: uint}))
     (get amount milestone)
 )
 
@@ -414,7 +564,7 @@
     )
 )
 
-;; Get all milestones for a job - needed by all-milestones-completed
+;; Get all milestones for a job
 (define-read-only (get-job-milestones (job-id uint))
     (let
         (
@@ -424,7 +574,7 @@
     )
 )
 
-;; Helper function to count completed milestones - needed by all-milestones-completed
+;; Helper function to count completed milestones
 (define-private (get-completed-milestone-count (job-id uint) (current-id uint) (count uint))
     (match (map-get? milestone-tracking {job-id: job-id, milestone-id: current-id})
         milestone (if (is-eq (get status milestone) u3)
@@ -435,7 +585,7 @@
     )
 )
 
-;; Helper function to check if all milestones are completed - needed by complete-milestone
+;; Helper function to check if all milestones are completed
 (define-private (all-milestones-completed (job-id uint))
     (let
         (
@@ -447,7 +597,7 @@
     )
 )
 
-;; Helper function to create milestones recursively - needed by post-job-with-milestones
+;; Helper function to create milestones recursively
 (define-private (create-milestones (job-id uint) (milestones (list 5 {description: (string-ascii 200), amount: uint, deadline: uint})) (milestone-id uint))
     (match (element-at milestones milestone-id)
         milestone (begin
@@ -469,434 +619,10 @@
     )
 )
 
-;; Main public functions that use the helpers
+;; Post job with milestones
 (define-public (post-job-with-milestones 
     (title (string-ascii 100)) 
     (description (string-ascii 500)) 
     (budget uint) 
     (deadline uint)
-    (milestones (list 5 {description: (string-ascii 200), amount: uint, deadline: uint}))
-)
-    (let
-        (
-            (job-id (var-get next-job-id))
-            (total-milestone-amount (fold + (map get-amount milestones) u0))
-        )
-        ;; Validate inputs
-        (asserts! (> budget u0) err-invalid-amount)
-        (asserts! (> deadline block-height) err-past-deadline)
-        (asserts! (>= (- deadline block-height) minimum-bid-time) err-invalid-status)
-        (asserts! (is-eq budget total-milestone-amount) err-invalid-amount)
-        
-        ;; Create the job
-        (map-set jobs job-id {
-            client: tx-sender,
-            title: title,
-            description: description,
-            budget: budget,
-            freelancer: none,
-            status: u1,
-            deadline: deadline,
-            created-at: block-height
-        })
-        
-        ;; Create milestones
-        (try! (create-milestones job-id milestones u0))
-        
-        ;; Increment job ID
-        (var-set next-job-id (+ job-id u1))
-        (ok job-id)
-    )
-)
-
-;; Get milestone details
-(define-read-only (get-milestone (job-id uint) (milestone-id uint))
-    (map-get? milestone-tracking {job-id: job-id, milestone-id: milestone-id})
-)
-
-;; Complete milestone
-(define-public (complete-milestone (job-id uint) (milestone-id uint))
-    (let
-        (
-            (job (unwrap! (map-get? jobs job-id) err-not-found))
-            (milestone (unwrap! (map-get? milestone-tracking {job-id: job-id, milestone-id: milestone-id}) err-not-found))
-        )
-        (asserts! (is-eq (get status job) u2) err-invalid-status)
-        (asserts! (is-eq (get status milestone) u1) err-invalid-status)
-        (asserts! (is-eq tx-sender (get client job)) err-unauthorized)
-        (asserts! (<= block-height (get deadline milestone)) err-past-deadline)
-        
-        ;; Transfer milestone amount to freelancer
-        (try! (as-contract (stx-transfer? 
-            (get amount milestone) 
-            tx-sender 
-            (unwrap! (get freelancer job) err-not-found)
-        )))
-        
-        ;; Update milestone status
-        (map-set milestone-tracking 
-            {job-id: job-id, milestone-id: milestone-id}
-            (merge milestone {status: u3})
-        )
-        
-        ;; Check if all milestones are completed
-        (if (all-milestones-completed job-id)
-            (begin
-                (map-set jobs job-id (merge job {status: u3}))
-                (ok true)
-            )
-            (ok true)
-        )
-    )
-)
-;; Helper function to check if all milestones are completed
-(define-private (all-milestones-completed (job-id uint))
-    (let
-        (
-            (job (unwrap! (map-get? jobs job-id) err-not-found))
-            (total-milestones (len (unwrap! (get-job-milestones job-id) false)))
-            (completed-milestones (get-completed-milestone-count job-id u0 u0))
-        )
-        (is-eq total-milestones completed-milestones)
-    )
-)
-
-;; Helper function to count completed milestones
-(define-private (get-completed-milestone-count (job-id uint) (current-id uint) (count uint))
-    (match (map-get? milestone-tracking {job-id: job-id, milestone-id: current-id})
-        milestone (if (is-eq (get status milestone) u3)
-            (get-completed-milestone-count job-id (+ current-id u1) (+ count u1))
-            (get-completed-milestone-count job-id (+ current-id u1) count)
-        )
-        count
-    )
-)
-
-;; Helper function to get all milestones for a job
-(define-read-only (get-job-milestones (job-id uint))
-    (let
-        (
-            (milestone-list (list))
-        )
-        (ok (get-milestone-list job-id u0 milestone-list))
-    )
-)
-
-;; Helper function to build milestone list
-(define-private (get-milestone-list (job-id uint) (current-id uint) (acc (list 5 {milestone-id: uint, description: (string-ascii 200), amount: uint, status: uint, deadline: uint})))
-    (match (map-get? milestone-tracking {job-id: job-id, milestone-id: current-id})
-        milestone (if (< (len acc) u5)
-            (get-milestone-list 
-                job-id 
-                (+ current-id u1)
-                (unwrap! (as-max-len? 
-                    (append 
-                        acc
-                        {
-                            milestone-id: current-id,
-                            description: (get description milestone),
-                            amount: (get amount milestone),
-                            status: (get status milestone),
-                            deadline: (get deadline milestone)
-                        }
-                    )
-                    u5
-                ) 
-                acc)
-            )
-            acc
-        )
-        acc
-    )
-
-    ;; Post the main job
-        (try! (post-job title description budget deadline))
-        
-        ;; Set up milestones
-        (map-set milestone-tracking 
-            {job-id: job-id, milestone-id: u0}
-            (unwrap! (element-at? milestones u0) err-invalid-status)
-        )
-        
-        (ok job-id)
-    )
-
- ;; Update milestone status
-        (map-set milestone-tracking 
-            {job-id: job-id, milestone-id: milestone-id}
-            (merge milestone {status: u2})
-        )
-        
-        ;; Transfer milestone payment
-        (try! (as-contract (stx-transfer? 
-            (get amount milestone)
-            tx-sender
-            (unwrap! (get freelancer job) err-not-found)
-        )))
-
-;; Update freelancer earnings
-        (let
-            (
-                (profile (default-to 
-                    {name: "", bio: "", contact: "", hourly-rate: u0, total-earnings: u0}
-                    (map-get? user-profiles (unwrap! (get freelancer job) err-not-found))
-                ))
-            )
-            (map-set user-profiles 
-                (unwrap! (get freelancer job) err-not-found)
-                (merge profile {
-                    total-earnings: (+ (get total-earnings profile) (get amount milestone))
-                })
-            )
-        )
-        
-        (ok true)
-
-;; Enhanced job completion with automatic rating request
-(define-public (complete-job-enhanced (job-id uint) (rating uint) (comment (string-ascii 200)))
-    (let
-        (
-            (job (unwrap! (map-get? jobs job-id) err-not-found))
-        )
-        ;; Complete the job first
-        (try! (complete-job job-id))
-        
-        ;; Add rating
-        (try! (rate-job job-id rating))
-        
-        ;; Store detailed rating
-        (map-set job-ratings 
-            {job-id: job-id, rater: tx-sender}
-            {rating: rating, comment: comment}
-        )
-        
-        (ok true)
-    )
-)
-
-;; New Read-only Functions
-
-(define-read-only (get-job-bids (job-id uint))
-    (map-get? bids {job-id: job-id, freelancer: tx-sender})
-)
-
-(define-read-only (get-user-profile (user principal))
-    (map-get? user-profiles user)
-)
-
-(define-read-only (get-freelancer-skills (user principal))
-    (map-get? freelancer-skills user)
-)
-
-(define-read-only (get-job-rating (job-id uint) (rater principal))
-    (map-get? job-ratings {job-id: job-id, rater: rater})
-)
-
-(define-read-only (get-milestone (job-id uint) (milestone-id uint))
-    (map-get? milestone-tracking {job-id: job-id, milestone-id: milestone-id})
-)
-
-;; Time tracking system
-(define-map time-logs
-    {job-id: uint, freelancer: principal}
-    (list 100 {
-        date: uint,
-        hours: uint,
-        description: (string-ascii 200)
-    })
-)
-
-;; Add time entry
-(define-public (log-time (job-id uint) (hours uint) (description (string-ascii 200)))
-    (let
-        (
-            (job (unwrap! (map-get? jobs job-id) err-not-found))
-            (current-logs (default-to (list) (map-get? time-logs {job-id: job-id, freelancer: tx-sender})))
-        )
-        ;; Verify freelancer is assigned to job
-        (asserts! (is-eq (some tx-sender) (get freelancer job)) err-unauthorized)
-        (asserts! (is-eq (get status job) u2) err-invalid-status)
-        
-        ;; Add new time entry
-        (ok (map-set time-logs 
-            {job-id: job-id, freelancer: tx-sender}
-            (unwrap! (as-max-len? 
-                (append 
-                    current-logs 
-                    {date: block-height, hours: hours, description: description}
-                )
-                u100
-            ) err-invalid-status))
-        )
-    )
-)
-
-;; Get time logs for a job
-(define-read-only (get-time-logs (job-id uint) (freelancer principal))
-    (map-get? time-logs {job-id: job-id, freelancer: freelancer})
-)
-
-;; Job categories system
-(define-map job-categories
-    uint
-    (string-ascii 50)
-)
-
-(define-map jobs-by-category
-    (string-ascii 50)
-    (list 100 uint)
-)
-
-;; Add job category
-(define-public (add-job-category (category (string-ascii 50)))
-    (begin
-        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
-        (map-set job-categories (var-get next-job-id) category)
-        (ok true)
-    )
-)
-
-;; Add job to category
-(define-public (add-job-to-category (job-id uint) (category (string-ascii 50)))
-    (let
-        (
-            (job (unwrap! (map-get? jobs job-id) err-not-found))
-            (current-jobs (default-to (list) (map-get? jobs-by-category category)))
-        )
-        (asserts! (is-eq tx-sender (get client job)) err-unauthorized)
-        
-        (ok (map-set jobs-by-category 
-            category
-            (unwrap! (as-max-len? 
-                (append current-jobs job-id)
-                u100
-            ) err-invalid-status))
-        )
-    )
-)
-
-;; Get jobs by category
-(define-read-only (get-jobs-by-category (category (string-ascii 50)))
-    (default-to (list) (map-get? jobs-by-category category))
-)
-
-;; Freelancer availability system
-(define-map freelancer-availability
-    principal
-    {
-        available: bool,
-        next-available-date: uint,
-        weekly-hours: uint
-    }
-)
-
-;; Update availability
-(define-public (update-availability (available bool) (next-available-date uint) (weekly-hours uint))
-    (ok (map-set freelancer-availability 
-        tx-sender
-        {
-            available: available,
-            next-available-date: next-available-date,
-            weekly-hours: weekly-hours
-        }
-    ))
-)
-
-;; Get freelancer availability
-(define-read-only (get-freelancer-availability (freelancer principal))
-    (map-get? freelancer-availability freelancer)
-)
-
-;; Job bookmarking system
-(define-map bookmarked-jobs
-    principal
-    (list 50 uint)
-)
-
-;; Bookmark a job
-(define-public (bookmark-job (job-id uint))
-    (let
-        (
-            (current-bookmarks (default-to (list) (map-get? bookmarked-jobs tx-sender)))
-        )
-        (ok (map-set bookmarked-jobs 
-            tx-sender
-            (unwrap! (as-max-len? 
-                (append current-bookmarks job-id)
-                u50
-            ) err-invalid-status))
-        )
-    )
-)
-
-;; Enhanced search functionality
-(define-map job-tags
-    uint
-    (list 10 (string-ascii 50))
-)
-
-;; Add tags to job
-(define-public (add-job-tags (job-id uint) (tags (list 10 (string-ascii 50))))
-    (let
-        (
-            (job (unwrap! (map-get? jobs job-id) err-not-found))
-        )
-        (asserts! (is-eq tx-sender (get client job)) err-unauthorized)
-        (ok (map-set job-tags job-id tags))
-    )
-)
-
-;; Get job tags
-(define-read-only (get-job-tags (job-id uint))
-    (map-get? job-tags job-id)
-)
-
-
-;; Enhanced milestone system with progress tracking
-(define-map milestone-progress
-    {job-id: uint, milestone-id: uint}
-    {
-        percent-complete: uint,
-        last-update: uint,
-        comments: (list 10 (string-ascii 200))
-    }
-)
-
-;; Update milestone progress
-(define-public (update-milestone-progress 
-    (job-id uint) 
-    (milestone-id uint) 
-    (percent uint)
-    (comment (string-ascii 200))
-)
-    (let
-        (
-            (job (unwrap! (map-get? jobs job-id) err-not-found))
-            (current-progress (default-to 
-                {percent-complete: u0, last-update: u0, comments: (list)}
-                (map-get? milestone-progress {job-id: job-id, milestone-id: milestone-id})
-            ))
-        )
-        (asserts! (or 
-            (is-eq tx-sender (unwrap! (get freelancer job) err-not-found))
-            (is-eq tx-sender (get client job))
-        ) err-unauthorized)
-        
-        (ok (map-set milestone-progress
-            {job-id: job-id, milestone-id: milestone-id}
-            {
-                percent-complete: percent,
-                last-update: block-height,
-                comments: (unwrap! (as-max-len? 
-                    (append (get comments current-progress) comment)
-                    u10
-                ) err-invalid-status)
-            }
-        ))
-    )
-)
-
-;; Get milestone progress
-(define-read-only (get-milestone-progress (job-id uint) (milestone-id uint))
-    (map-get? milestone-progress {job-id: job-id, milestone-id: milestone-id})
-)
+    (milestone)))
